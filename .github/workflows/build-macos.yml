@@ -43,20 +43,17 @@ jobs:
         run: |
           set -euo pipefail
           echo "Working dir: $PWD"
-          echo "Top-level files:"
           ls -la .
 
           rm -rf build dist
           APP_NAME="DocGen"
 
-          # Ensure main script exists
           if [ ! -f "./docgen_v2.py" ]; then
-            echo "ERROR: docgen_v2.py not found in repo root!"
-            find . -maxdepth 3 -print
+            echo "ERROR: docgen_v2.py not found!"
             exit 1
           fi
 
-          # Candidate resource files (adjust if you add new ones)
+          # список файлов, которые реально есть в репозитории
           CANDIDATES=(
             "template_permit.docx"
             "template_spisok.docx"
@@ -68,59 +65,31 @@ jobs:
             "settings.json"
             "counters.json"
             "workers.json"
-            "collections.json"   # if missing, we'll create a placeholder below
+            "collections.json"   # создадим плейсхолдер, если файла нет
           )
 
-          # If collections.json is missing, create temporary placeholder
           if [ ! -f "collections.json" ]; then
-            echo "collections.json not found — creating temporary placeholder so build won't fail."
+            echo "collections.json not found — creating placeholder."
             cat > collections.json <<'JSON'
 {
   "collections": []
 }
 JSON
-            # mark that we created it so we can delete after build if you want
-            CREATED_PLACEHOLDER=1
-          else
-            CREATED_PLACEHOLDER=0
           fi
 
-          # Build ADDDATA args only for existing files / directories
           ADDDATA_ARGS=()
           for F in "${CANDIDATES[@]}"; do
-            if [ -e "${F}" ]; then
-              echo "Including resource: ${F}"
+            if [ -e "$F" ]; then
+              echo "Including resource: $F"
               ADDDATA_ARGS+=("--add-data" "${F}:.")
-            else
-              echo "Not found, skipping resource: ${F}"
             fi
           done
 
-          # Run PyInstaller (safe passing of args array)
-          echo "Running PyInstaller..."
-          pyinstaller --noconfirm --windowed --name "${APP_NAME}" --clean "${ADDDATA_ARGS[@]:-}" ./docgen_v2.py
+          echo "Running PyInstaller with args: ${ADDDATA_ARGS[@]}"
+          pyinstaller --noconfirm --windowed --name "${APP_NAME}" --clean "${ADDDATA_ARGS[@]}" ./docgen_v2.py
 
-          echo "PyInstaller finished. Inspecting dist/..."
-          ls -la dist || true
-
-          APP_PATH="dist/${APP_NAME}.app"
-          if [ -d "${APP_PATH}" ]; then
-            echo "App produced: ${APP_PATH}"
-            echo "Contents of Resources:"
-            ls -la "${APP_PATH}/Contents/Resources" || true
-            echo "Main executable info:"
-            file "${APP_PATH}/Contents/MacOS/${APP_NAME}" || true
-          else
-            echo "ERROR: expected ${APP_PATH} but it was not produced"
-            ls -la dist || true
-            exit 1
-          fi
-
-          # If we created a placeholder collections.json, optionally remove it from workspace
-          if [ "${CREATED_PLACEHOLDER}" = "1" ]; then
-            echo "Removing temporary collections.json created for build."
-            rm -f collections.json
-          fi
+          echo "PyInstaller finished. dist/:"
+          ls -la dist
 
       - name: Package .app into zip (preserve mac resource forks)
         run: |
@@ -131,7 +100,7 @@ JSON
             ditto -c -k --sequesterRsrc --keepParent "${APP_PATH}" "out/${APP_NAME}-macos.zip"
             ls -l out
           else
-            echo "ERROR: ${APP_PATH} not found, cannot produce zip."
+            echo "ERROR: ${APP_PATH} not found"
             exit 1
           fi
 

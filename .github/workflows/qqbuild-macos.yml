@@ -1,0 +1,110 @@
+name: Build macOS .app
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        python-version: [3.11]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: (Optional) Ensure brew present (no-op if present)
+        run: |
+          which brew || /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || true
+          brew --version || true
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt
+          pip install pyinstaller==5.13.0
+
+      - name: Run tests (optional)
+        run: |
+          echo "No tests configured"
+
+      - name: Build .app with PyInstaller
+        env:
+          PYTHONWARNINGS: ignore
+        run: |
+          set -euo pipefail
+          echo "Working dir: $PWD"
+          ls -la .
+
+          rm -rf build dist
+          APP_NAME="DocGen"
+
+          if [ ! -f "./docgen_v2.py" ]; then
+            echo "ERROR: docgen_v2.py not found!"
+            exit 1
+          fi
+
+          # список файлов, которые реально есть в репозитории
+          CANDIDATES=(
+            "template_permit.docx"
+            "template_spisok.docx"
+            "template_order.docx"
+            "template_pb_order.docx"
+            "templates.json"
+            "defaults.json"
+            "mapping.json"
+            "settings.json"
+            "counters.json"
+            "workers.json"
+            "collections.json"   # создадим плейсхолдер, если файла нет
+          )
+
+          if [ ! -f "collections.json" ]; then
+            echo "collections.json not found — creating placeholder."
+            cat > collections.json <<'JSON'
+{
+  "collections": []
+}
+JSON
+          fi
+
+          ADDDATA_ARGS=()
+          for F in "${CANDIDATES[@]}"; do
+            if [ -e "$F" ]; then
+              echo "Including resource: $F"
+              ADDDATA_ARGS+=("--add-data" "$F:.")
+            fi
+          done
+
+          pyinstaller --noconfirm --windowed --name "${APP_NAME}" --clean "${ADDDATA_ARGS[@]}" ./docgen_v2.py
+
+          echo "PyInstaller finished. dist/:"
+          ls -la dist
+
+      - name: Package .app into zip (preserve mac resource forks)
+        run: |
+          APP_NAME="DocGen"
+          APP_PATH="dist/${APP_NAME}.app"
+          mkdir -p out
+          if [ -d "${APP_PATH}" ]; then
+            ditto -c -k --sequesterRsrc --keepParent "${APP_PATH}" "out/${APP_NAME}-macos.zip"
+            ls -l out
+          else
+            echo "ERROR: ${APP_PATH} not found"
+            exit 1
+          fi
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DocGen-macos
+          path: out/*.zip

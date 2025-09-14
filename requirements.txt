@@ -1,0 +1,6 @@
+customtkinter
+docxtpl
+python-docx
+Jinja2
+lxml
+Pillow

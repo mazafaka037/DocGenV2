@@ -70,11 +70,7 @@ jobs:
 
           if [ ! -f "collections.json" ]; then
             echo "collections.json not found — creating placeholder."
-            cat > collections.json <<'JSON'
-{
-  "collections": []
-}
-JSON
+            echo '{ "collections": [] }' > collections.json
           fi
 
           ADDDATA_ARGS=()
@@ -109,4 +105,3 @@ JSON
         with:
           name: DocGen-macos
           path: out/*.zip
-

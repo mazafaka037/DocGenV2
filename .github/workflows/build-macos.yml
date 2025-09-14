@@ -23,7 +23,7 @@ jobs:
 
       - name: Install system deps (brew)
         run: |
-          # обычно на runner'е Tk/Tcl уже есть; оставлю комментарии на случай
+          # Обычно на runner'е Tcl/Tk уже есть; оставлю комментарии на случай
           which brew || /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || true
           brew --version || true
 
@@ -35,18 +35,18 @@ jobs:
 
       - name: Run tests (optional)
         run: |
-          # Добавьте сюда тесты, если есть
           echo "No tests configured"
 
       - name: Build .app with PyInstaller
         env:
           PYTHONWARNINGS: ignore
         run: |
+          set -e
           rm -rf build dist
-          # Укажите имя приложения ниже ("DocGen" -> создаст DocGen.app)
           APP_NAME="DocGen"
-          # Включаем docx-шаблоны/прочие файлы рядом с .py — перечислите ресурсы, которые используются в рантайме
-          # Формат --add-data "src:dest" (macOS / linux style). Если файлы лежат в корне репо — укажите их:
+
+          # Пример --add-data: перечислите все runtime-файлы/папки (docx, json, templates, icons и т.д.)
+          # Формат на mac/linux: "src:dest"
           pyinstaller \
             --noconfirm \
             --windowed \
@@ -55,7 +55,29 @@ jobs:
             --add-data "template_spisok.docx:." \
             --add-data "template_order.docx:." \
             --add-data "template_pb_order.docx:." \
+            --add-data "templates.json:." \
+            --add-data "collections.json:." \
+            --add-data "templates/:templates" \
+            --clean \
             docgen_v2.py
+
+          echo "PyInstaller exit code: $?"
+
+      - name: Inspect dist and app contents
+        run: |
+          APP_NAME="DocGen"
+          if [ -d "dist/${APP_NAME}.app" ]; then
+            echo "dist/${APP_NAME}.app exists"
+            file "dist/${APP_NAME}.app/Contents/MacOS/${APP_NAME}" || true
+            echo "List Resources:"
+            ls -la "dist/${APP_NAME}.app/Contents/Resources" || true
+            # Проверить, что шаблоны попали
+            ls -la "dist/${APP_NAME}.app/Contents/Resources/templates" || true
+          else
+            echo "ERROR: expected dist/${APP_NAME}.app but it was not produced"
+            ls -la dist || true
+            exit 1
+          fi
 
       - name: Prepare artifact (.zip)
         run: |
@@ -63,9 +85,9 @@ jobs:
           APP_NAME="DocGen"
           mkdir -p out
           if [ -d "dist/${APP_NAME}.app" ]; then
-            # Use ditto to make a zip preserving mac resource forks
             ditto -c -k --sequesterRsrc --keepParent "dist/${APP_NAME}.app" "out/${APP_NAME}-macos.zip"
             ls -l out
+            unzip -l "out/${APP_NAME}-macos.zip" | head -n 40 || true
           else
             echo "ERROR: expected dist/${APP_NAME}.app but it was not produced"
             ls -la dist || true

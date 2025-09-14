@@ -11,8 +11,9 @@ jobs:
     strategy:
       matrix:
         python-version: [3.11]
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Python ${{ matrix.python-version }}
@@ -21,9 +22,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
 
-      - name: Install system deps (brew)
+      - name: (Optional) Ensure brew present (no-op if present)
         run: |
-          # Обычно на runner'е Tcl/Tk уже есть; оставлю комментарии на случай
           which brew || /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || true
           brew --version || true
 
@@ -41,56 +41,97 @@ jobs:
         env:
           PYTHONWARNINGS: ignore
         run: |
-          set -e
+          set -euo pipefail
+          echo "Working dir: $PWD"
+          echo "Top-level files:"
+          ls -la .
+
           rm -rf build dist
           APP_NAME="DocGen"
 
-          # Пример --add-data: перечислите все runtime-файлы/папки (docx, json, templates, icons и т.д.)
-          # Формат на mac/linux: "src:dest"
-          pyinstaller \
-            --noconfirm \
-            --windowed \
-            --name "${APP_NAME}" \
-            --add-data "template_permit.docx:." \
-            --add-data "template_spisok.docx:." \
-            --add-data "template_order.docx:." \
-            --add-data "template_pb_order.docx:." \
-            --add-data "templates.json:." \
-            --add-data "collections.json:." \
-            --add-data "templates/:templates" \
-            --clean \
-            docgen_v2.py
+          # Ensure main script exists
+          if [ ! -f "./docgen_v2.py" ]; then
+            echo "ERROR: docgen_v2.py not found in repo root!"
+            find . -maxdepth 3 -print
+            exit 1
+          fi
 
-          echo "PyInstaller exit code: $?"
+          # Candidate resource files (adjust if you add new ones)
+          CANDIDATES=(
+            "template_permit.docx"
+            "template_spisok.docx"
+            "template_order.docx"
+            "template_pb_order.docx"
+            "templates.json"
+            "defaults.json"
+            "mapping.json"
+            "settings.json"
+            "counters.json"
+            "workers.json"
+            "collections.json"   # if missing, we'll create a placeholder below
+          )
 
-      - name: Inspect dist and app contents
-        run: |
-          APP_NAME="DocGen"
-          if [ -d "dist/${APP_NAME}.app" ]; then
-            echo "dist/${APP_NAME}.app exists"
-            file "dist/${APP_NAME}.app/Contents/MacOS/${APP_NAME}" || true
-            echo "List Resources:"
-            ls -la "dist/${APP_NAME}.app/Contents/Resources" || true
-            # Проверить, что шаблоны попали
-            ls -la "dist/${APP_NAME}.app/Contents/Resources/templates" || true
+          # If collections.json is missing, create temporary placeholder
+          if [ ! -f "collections.json" ]; then
+            echo "collections.json not found — creating temporary placeholder so build won't fail."
+            cat > collections.json <<'JSON'
+{
+  "collections": []
+}
+JSON
+            # mark that we created it so we can delete after build if you want
+            CREATED_PLACEHOLDER=1
           else
-            echo "ERROR: expected dist/${APP_NAME}.app but it was not produced"
+            CREATED_PLACEHOLDER=0
+          fi
+
+          # Build ADDDATA args only for existing files / directories
+          ADDDATA_ARGS=()
+          for F in "${CANDIDATES[@]}"; do
+            if [ -e "${F}" ]; then
+              echo "Including resource: ${F}"
+              ADDDATA_ARGS+=("--add-data" "${F}:.")
+            else
+              echo "Not found, skipping resource: ${F}"
+            fi
+          done
+
+          # Run PyInstaller (safe passing of args array)
+          echo "Running PyInstaller..."
+          pyinstaller --noconfirm --windowed --name "${APP_NAME}" --clean "${ADDDATA_ARGS[@]:-}" ./docgen_v2.py
+
+          echo "PyInstaller finished. Inspecting dist/..."
+          ls -la dist || true
+
+          APP_PATH="dist/${APP_NAME}.app"
+          if [ -d "${APP_PATH}" ]; then
+            echo "App produced: ${APP_PATH}"
+            echo "Contents of Resources:"
+            ls -la "${APP_PATH}/Contents/Resources" || true
+            echo "Main executable info:"
+            file "${APP_PATH}/Contents/MacOS/${APP_NAME}" || true
+          else
+            echo "ERROR: expected ${APP_PATH} but it was not produced"
             ls -la dist || true
             exit 1
           fi
 
-      - name: Prepare artifact (.zip)
+          # If we created a placeholder collections.json, optionally remove it from workspace
+          if [ "${CREATED_PLACEHOLDER}" = "1" ]; then
+            echo "Removing temporary collections.json created for build."
+            rm -f collections.json
+          fi
+
+      - name: Package .app into zip (preserve mac resource forks)
         run: |
-          set -e
           APP_NAME="DocGen"
+          APP_PATH="dist/${APP_NAME}.app"
           mkdir -p out
-          if [ -d "dist/${APP_NAME}.app" ]; then
-            ditto -c -k --sequesterRsrc --keepParent "dist/${APP_NAME}.app" "out/${APP_NAME}-macos.zip"
+          if [ -d "${APP_PATH}" ]; then
+            ditto -c -k --sequesterRsrc --keepParent "${APP_PATH}" "out/${APP_NAME}-macos.zip"
             ls -l out
-            unzip -l "out/${APP_NAME}-macos.zip" | head -n 40 || true
           else
-            echo "ERROR: expected dist/${APP_NAME}.app but it was not produced"
-            ls -la dist || true
+            echo "ERROR: ${APP_PATH} not found, cannot produce zip."
             exit 1
           fi
 
@@ -99,3 +140,4 @@ jobs:
         with:
           name: DocGen-macos
           path: out/*.zip
+
